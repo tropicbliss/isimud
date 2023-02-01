@@ -79,7 +79,7 @@ async fn ws_handler(
         String::from("Unknown browser")
     };
     println!("`{user_agent}` at {} connected.", addr.to_string());
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    ws.on_upgrade(move |socket| handle_socket(socket, addr, state))
 }
 
 enum SocketState {
@@ -107,106 +107,172 @@ impl PubSubMsg {
     }
 }
 
-async fn handle_socket(socket: WebSocket, State(state): State<Arc<SharedState>>) {
+async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<Arc<SharedState>>) {
     let (mut sender, mut receiver) = socket.split();
     let mut socket_state = SocketState::Pending;
     'recv: while let Some(Ok(msg)) = receiver.next().await {
         match msg {
-            Message::Text(text) => match socket_state {
-                SocketState::Pending => {
-                    strmatch!(text.as_str() => {
-                        "^pub auth .+$" => {
-                            let password = text.split_whitespace().nth(2);
-                            if let Some(password) = password {
-                                if password == state.password {
-                                    socket_state = SocketState::Authed;
+            Message::Text(text) => {
+                println!(">>> {} sent str: {:?}", who, text);
+                match socket_state {
+                    SocketState::Pending => {
+                        strmatch!(text.as_str() => {
+                            "^pub auth .+$" => {
+                                let password = text.split_whitespace().nth(2);
+                                if let Some(password) = password {
+                                    if password == state.password {
+                                        socket_state = SocketState::Authed;
+                                    } else {
+                                        if let Err(e) = sender.send(Message::Close(Some(CloseFrame {
+                                            code: axum::extract::ws::close_code::INVALID,
+                                            reason: Cow::from("Invalid password"),
+                                        }))).await {
+                                            println!("Could not send Close due to {}, probably it is ok?", e);
+                                        }
+                                        return;
+                                    }
                                 } else {
-                                    let _ = sender.send(Message::Close(Some(CloseFrame {
+                                    if let Err(e) = sender.send(Message::Close(Some(CloseFrame {
                                         code: axum::extract::ws::close_code::INVALID,
-                                        reason: Cow::from("Invalid password"),
-                                    }))).await;
+                                        reason: Cow::from("Malformed command"),
+                                    }))).await {
+                                        println!("Could not send Close due to {}, probably it is ok?", e);
+                                    }
                                     return;
                                 }
-                            } else {
-                                let _ = sender.send(Message::Close(Some(CloseFrame {
+                            },
+                            _ => {
+                                if let Ok(sub_data) = serde_json::from_str::<SubscriberMsg>(&text) {
+                                    socket_state = SocketState::Subbed { metadata: sub_data };
+                                    break 'recv;
+                                } else {
+                                    if let Err(e) = sender.send(Message::Close(Some(CloseFrame {
+                                        code: axum::extract::ws::close_code::INVALID,
+                                        reason: Cow::from("Invalid message"),
+                                    }))).await {
+                                        println!("Could not send Close due to {}, probably it is ok?", e);
+                                    }
+                                    return;
+                                }
+                            },
+                        })
+                    }
+                    SocketState::Authed => {
+                        strmatch!(text.as_str() => {
+                            "^pub name .+$" => {
+                                let publisher = text.split_whitespace().nth(2);
+                                if let Some(publisher) = publisher {
+                                    socket_state = SocketState::Pubbed { publisher: publisher.to_string() };
+                                } else {
+                                    if let Err(e) = sender.send(Message::Close(Some(CloseFrame {
+                                        code: axum::extract::ws::close_code::INVALID,
+                                        reason: Cow::from("Malformed command"),
+                                    }))).await {
+                                        println!("Could not send Close due to {}, probably it is ok?", e);
+                                    }
+                                    return;
+                                }
+                            },
+                            _ => {
+                                if let Err(e) = sender.send(Message::Close(Some(CloseFrame {
                                     code: axum::extract::ws::close_code::INVALID,
-                                    reason: Cow::from("Malformed command"),
-                                }))).await;
+                                    reason: Cow::from("Invalid command"),
+                                }))).await {
+                                    println!("Could not send Close due to {}, probably it is ok?", e);
+                                }
                                 return;
                             }
-                        },
-                        _ => {
-                            if let Ok(sub_data) = serde_json::from_str::<SubscriberMsg>(&text) {
-                                socket_state = SocketState::Subbed { metadata: sub_data };
-                                break 'recv;
-                            } else {
-                                let _ = sender.send(Message::Close(Some(CloseFrame {
-                                    code: axum::extract::ws::close_code::INVALID,
-                                    reason: Cow::from("Invalid message"),
-                                }))).await;
+                        })
+                    }
+                    SocketState::Pubbed { ref publisher } => {
+                        match serde_json::from_str::<PublisherMsg>(&text) {
+                            Ok(data) => {
+                                let publisher_msg = PubSubMsg::new(data, publisher.to_string());
+                                let _ = state.tx.send(publisher_msg);
+                            }
+                            Err(e) => {
+                                if let Err(e) = sender
+                                    .send(Message::Close(Some(CloseFrame {
+                                        code: axum::extract::ws::close_code::INVALID,
+                                        reason: Cow::from(format!(
+                                            "Invalid JSON: {}",
+                                            e.to_string()
+                                        )),
+                                    })))
+                                    .await
+                                {
+                                    println!(
+                                        "Could not send Close due to {}, probably it is ok?",
+                                        e
+                                    );
+                                }
                                 return;
                             }
-                        },
-                    })
-                }
-                SocketState::Authed => {
-                    strmatch!(text.as_str() => {
-                        "^pub name .+$" => {
-                            let publisher = text.split_whitespace().nth(2);
-                            if let Some(publisher) = publisher {
-                                socket_state = SocketState::Pubbed { publisher: publisher.to_string() };
-                            } else {
-                                let _ = sender.send(Message::Close(Some(CloseFrame {
-                                    code: axum::extract::ws::close_code::INVALID,
-                                    reason: Cow::from("Malformed command"),
-                                }))).await;
-                                return;
-                            }
-                        },
-                        _ => {
-                            let _ = sender.send(Message::Close(Some(CloseFrame {
-                                code: axum::extract::ws::close_code::INVALID,
-                                reason: Cow::from("Invalid command"),
-                            }))).await;
-                            return;
-                        }
-                    })
-                }
-                SocketState::Pubbed { ref publisher } => {
-                    match serde_json::from_str::<PublisherMsg>(&text) {
-                        Ok(data) => {
-                            let publisher_msg = PubSubMsg::new(data, publisher.to_string());
-                            let _ = state.tx.send(publisher_msg);
-                        }
-                        Err(e) => {
-                            let _ = sender
-                                .send(Message::Close(Some(CloseFrame {
-                                    code: axum::extract::ws::close_code::INVALID,
-                                    reason: Cow::from(format!("Invalid JSON: {}", e.to_string())),
-                                })))
-                                .await;
-                            return;
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
-            },
-            Message::Close(_) => {
+            }
+            Message::Close(c) => {
+                if let Some(cf) = c {
+                    println!(
+                        ">>> {} sent close with code {} and reason `{}`",
+                        who, cf.code, cf.reason
+                    );
+                } else {
+                    println!(">>> {} somehow sent close message without CloseFrame", who);
+                }
                 return;
             }
+            Message::Ping(v) => {
+                println!(">>> {} sent ping with {:?}", who, v);
+            }
             _ => {
-                continue;
+                if let Err(e) = sender
+                    .send(Message::Close(Some(CloseFrame {
+                        code: axum::extract::ws::close_code::INVALID,
+                        reason: Cow::from("Invalid message"),
+                    })))
+                    .await
+                {
+                    println!("Could not send Close due to {}, probably it is ok?", e);
+                }
+                return;
             }
         }
     }
     if let SocketState::Subbed { metadata } = socket_state {
-        let mut receiver = state.tx.subscribe();
-        while let Ok(data) = receiver.recv().await {
-            if metadata.publisher == data.name && metadata.topic == data.msg.topic {
-                if sender.send(Message::Text(data.msg.data)).await.is_err() {
-                    return;
+        let mut send_task = tokio::spawn(async move {
+            let mut count = 0;
+            let mut receiver = state.tx.subscribe();
+            while let Ok(data) = receiver.recv().await {
+                if metadata.publisher == data.name && metadata.topic == data.msg.topic {
+                    count += 1;
+                    if sender.send(Message::Text(data.msg.data)).await.is_err() {
+                        println!("client {} abruptly disconnected", who);
+                        return count;
+                    }
                 }
+            }
+            count
+        });
+        let mut recv_task = tokio::spawn(async move {
+            if let Some(Ok(_)) = receiver.next().await {
+                return;
+            }
+        });
+        tokio::select! {
+            rv_a = (&mut send_task) => {
+                match rv_a {
+                    Ok(a) => println!("{} messages sent to {}", a, who),
+                    Err(a) => println!("Error sending messages {:?}", a)
+                }
+                recv_task.abort();
+            },
+            _ = (&mut recv_task) => {
+                send_task.abort();
             }
         }
     }
+    println!("Websocket context {} destroyed", who);
 }
