@@ -35,5 +35,7 @@ Communicating with this server is done through websockets at the root URL path (
 ### Environment variables
 
 `PASSWORD`: Only establishes a connection if the publisher connects with the same password.
+
 `IP` (optional): `127.0.0.1` by default.
+
 `PORT` (optional): `3000` by default.
