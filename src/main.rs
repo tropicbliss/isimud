@@ -122,7 +122,7 @@ async fn handle_socket(socket: WebSocket, State(state): State<Arc<SharedState>>)
                                     socket_state = SocketState::Authed;
                                 } else {
                                     let _ = sender.send(Message::Close(Some(CloseFrame {
-                                        code: axum::extract::ws::close_code::ERROR,
+                                        code: axum::extract::ws::close_code::INVALID,
                                         reason: Cow::from("Invalid password"),
                                     }))).await;
                                     return;
