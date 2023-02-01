@@ -814,9 +814,9 @@ dependencies = [
 
 [[package]]
 name = "strmatch"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c6c7c6d7ed74f9e01de9c42bf1902db4a702c40a82876a43bd672f9ad673267"
+checksum = "b755e83ce71afdeec035d51a63b268001b3a44b77578e090f01bcf2cb39877d5"
 dependencies = [
  "once_cell",
  "regex",

@@ -122,13 +122,15 @@ async fn handle_socket(socket: WebSocket, State(state): State<Arc<SharedState>>)
                                 } else {
                                     return;
                                 }
+                            } else {
+                                return;
                             }
                         },
                         _ => {
                             if let Ok(sub_data) = serde_json::from_str::<SubscriberMsg>(&text) {
                                 socket_state = SocketState::Subbed { metadata: sub_data };
-                                break 'recv;
                             }
+                            break 'recv;
                         },
                     })
                 }
@@ -142,7 +144,9 @@ async fn handle_socket(socket: WebSocket, State(state): State<Arc<SharedState>>)
                                 return;
                             }
                         },
-                        _ => {},
+                        _ => {
+                            return;
+                        }
                     })
                 }
                 SocketState::Pubbed { ref publisher } => {
