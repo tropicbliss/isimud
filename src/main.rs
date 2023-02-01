@@ -119,6 +119,8 @@ async fn handle_socket(socket: WebSocket, State(state): State<Arc<SharedState>>)
                             if let Some(password) = password {
                                 if password == state.password {
                                     socket_state = SocketState::Authed;
+                                } else {
+                                    return;
                                 }
                             }
                         },
@@ -136,6 +138,8 @@ async fn handle_socket(socket: WebSocket, State(state): State<Arc<SharedState>>)
                             let publisher = text.split_whitespace().nth(2);
                             if let Some(publisher) = publisher {
                                 socket_state = SocketState::Pubbed { publisher: publisher.to_string() };
+                            } else {
+                                return;
                             }
                         },
                         _ => {},
@@ -145,6 +149,8 @@ async fn handle_socket(socket: WebSocket, State(state): State<Arc<SharedState>>)
                     if let Ok(data) = serde_json::from_str::<PublisherMsg>(&text) {
                         let publisher_msg = PubSubMsg::new(data, publisher.to_string());
                         let _ = state.tx.send(publisher_msg);
+                    } else {
+                        return;
                     }
                 }
                 _ => {}
