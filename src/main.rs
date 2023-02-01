@@ -1,7 +1,7 @@
 use anyhow::Result;
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
+        ws::{CloseFrame, Message, WebSocket},
         ConnectInfo, State, WebSocketUpgrade,
     },
     response::IntoResponse,
@@ -12,6 +12,7 @@ use dotenvy::dotenv;
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::{
+    borrow::Cow,
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
 };
@@ -120,17 +121,31 @@ async fn handle_socket(socket: WebSocket, State(state): State<Arc<SharedState>>)
                                 if password == state.password {
                                     socket_state = SocketState::Authed;
                                 } else {
+                                    let _ = sender.send(Message::Close(Some(CloseFrame {
+                                        code: axum::extract::ws::close_code::ERROR,
+                                        reason: Cow::from("Invalid password"),
+                                    }))).await;
                                     return;
                                 }
                             } else {
+                                let _ = sender.send(Message::Close(Some(CloseFrame {
+                                    code: axum::extract::ws::close_code::INVALID,
+                                    reason: Cow::from("Malformed command"),
+                                }))).await;
                                 return;
                             }
                         },
                         _ => {
                             if let Ok(sub_data) = serde_json::from_str::<SubscriberMsg>(&text) {
                                 socket_state = SocketState::Subbed { metadata: sub_data };
+                                break 'recv;
+                            } else {
+                                let _ = sender.send(Message::Close(Some(CloseFrame {
+                                    code: axum::extract::ws::close_code::INVALID,
+                                    reason: Cow::from("Invalid message"),
+                                }))).await;
+                                return;
                             }
-                            break 'recv;
                         },
                     })
                 }
@@ -141,20 +156,37 @@ async fn handle_socket(socket: WebSocket, State(state): State<Arc<SharedState>>)
                             if let Some(publisher) = publisher {
                                 socket_state = SocketState::Pubbed { publisher: publisher.to_string() };
                             } else {
+                                let _ = sender.send(Message::Close(Some(CloseFrame {
+                                    code: axum::extract::ws::close_code::INVALID,
+                                    reason: Cow::from("Malformed command"),
+                                }))).await;
                                 return;
                             }
                         },
                         _ => {
+                            let _ = sender.send(Message::Close(Some(CloseFrame {
+                                code: axum::extract::ws::close_code::INVALID,
+                                reason: Cow::from("Invalid command"),
+                            }))).await;
                             return;
                         }
                     })
                 }
                 SocketState::Pubbed { ref publisher } => {
-                    if let Ok(data) = serde_json::from_str::<PublisherMsg>(&text) {
-                        let publisher_msg = PubSubMsg::new(data, publisher.to_string());
-                        let _ = state.tx.send(publisher_msg);
-                    } else {
-                        return;
+                    match serde_json::from_str::<PublisherMsg>(&text) {
+                        Ok(data) => {
+                            let publisher_msg = PubSubMsg::new(data, publisher.to_string());
+                            let _ = state.tx.send(publisher_msg);
+                        }
+                        Err(e) => {
+                            let _ = sender
+                                .send(Message::Close(Some(CloseFrame {
+                                    code: axum::extract::ws::close_code::INVALID,
+                                    reason: Cow::from(format!("Invalid JSON: {}", e.to_string())),
+                                })))
+                                .await;
+                            return;
+                        }
                     }
                 }
                 _ => {}
