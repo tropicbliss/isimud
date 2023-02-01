@@ -78,7 +78,7 @@ async fn ws_handler(
     } else {
         String::from("Unknown browser")
     };
-    println!("`{user_agent}` at {} connected.", addr.to_string());
+    tracing::info!("`{user_agent}` at {} connected.", addr.to_string());
     ws.on_upgrade(move |socket| handle_socket(socket, addr, state))
 }
 
@@ -113,7 +113,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
     'recv: while let Some(Ok(msg)) = receiver.next().await {
         match msg {
             Message::Text(text) => {
-                println!(">>> {} sent str: {:?}", who, text);
+                tracing::info!(">>> {} sent str: {:?}", who, text);
                 match socket_state {
                     SocketState::Pending => {
                         strmatch!(text.as_str() => {
@@ -127,7 +127,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
                                             code: axum::extract::ws::close_code::INVALID,
                                             reason: Cow::from("Invalid password"),
                                         }))).await {
-                                            println!("Could not send Close due to {}, probably it is ok?", e);
+                                            tracing::info!("Could not send Close due to {}, probably it is ok?", e);
                                         }
                                         return;
                                     }
@@ -136,7 +136,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
                                         code: axum::extract::ws::close_code::INVALID,
                                         reason: Cow::from("Malformed command"),
                                     }))).await {
-                                        println!("Could not send Close due to {}, probably it is ok?", e);
+                                        tracing::info!("Could not send Close due to {}, probably it is ok?", e);
                                     }
                                     return;
                                 }
@@ -150,7 +150,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
                                         code: axum::extract::ws::close_code::INVALID,
                                         reason: Cow::from("Invalid message"),
                                     }))).await {
-                                        println!("Could not send Close due to {}, probably it is ok?", e);
+                                        tracing::info!("Could not send Close due to {}, probably it is ok?", e);
                                     }
                                     return;
                                 }
@@ -168,7 +168,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
                                         code: axum::extract::ws::close_code::INVALID,
                                         reason: Cow::from("Malformed command"),
                                     }))).await {
-                                        println!("Could not send Close due to {}, probably it is ok?", e);
+                                        tracing::info!("Could not send Close due to {}, probably it is ok?", e);
                                     }
                                     return;
                                 }
@@ -178,7 +178,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
                                     code: axum::extract::ws::close_code::INVALID,
                                     reason: Cow::from("Invalid command"),
                                 }))).await {
-                                    println!("Could not send Close due to {}, probably it is ok?", e);
+                                    tracing::info!("Could not send Close due to {}, probably it is ok?", e);
                                 }
                                 return;
                             }
@@ -201,7 +201,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
                                     })))
                                     .await
                                 {
-                                    println!(
+                                    tracing::info!(
                                         "Could not send Close due to {}, probably it is ok?",
                                         e
                                     );
@@ -215,17 +215,19 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
             }
             Message::Close(c) => {
                 if let Some(cf) = c {
-                    println!(
+                    tracing::info!(
                         ">>> {} sent close with code {} and reason `{}`",
-                        who, cf.code, cf.reason
+                        who,
+                        cf.code,
+                        cf.reason
                     );
                 } else {
-                    println!(">>> {} somehow sent close message without CloseFrame", who);
+                    tracing::info!(">>> {} somehow sent close message without CloseFrame", who);
                 }
                 return;
             }
             Message::Ping(v) => {
-                println!(">>> {} sent ping with {:?}", who, v);
+                tracing::info!(">>> {} sent ping with {:?}", who, v);
             }
             _ => {
                 if let Err(e) = sender
@@ -235,7 +237,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
                     })))
                     .await
                 {
-                    println!("Could not send Close due to {}, probably it is ok?", e);
+                    tracing::info!("Could not send Close due to {}, probably it is ok?", e);
                 }
                 return;
             }
@@ -249,7 +251,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
                 if metadata.publisher == data.name && metadata.topic == data.msg.topic {
                     count += 1;
                     if sender.send(Message::Text(data.msg.data)).await.is_err() {
-                        println!("client {} abruptly disconnected", who);
+                        tracing::info!("client {} abruptly disconnected", who);
                         return count;
                     }
                 }
@@ -264,8 +266,8 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
         tokio::select! {
             rv_a = (&mut send_task) => {
                 match rv_a {
-                    Ok(a) => println!("{} messages sent to {}", a, who),
-                    Err(a) => println!("Error sending messages {:?}", a)
+                    Ok(a) => tracing::info!("{} messages sent to {}", a, who),
+                    Err(a) => tracing::info!("Error sending messages {:?}", a)
                 }
                 recv_task.abort();
             },
@@ -274,5 +276,5 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
             }
         }
     }
-    println!("Websocket context {} destroyed", who);
+    tracing::info!("Websocket context {} destroyed", who);
 }
