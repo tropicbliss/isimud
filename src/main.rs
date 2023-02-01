@@ -119,8 +119,6 @@ async fn handle_socket(socket: WebSocket, State(state): State<Arc<SharedState>>)
                             if let Some(password) = password {
                                 if password == state.password {
                                     socket_state = SocketState::Authed;
-                                } else {
-                                    return;
                                 }
                             }
                         },
