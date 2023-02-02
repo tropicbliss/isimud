@@ -170,21 +170,9 @@ async fn handle_socket(
                                     if password == state.password {
                                         socket_state = SocketState::Authed;
                                     } else {
-                                        if let Err(e) = sender.send(Message::Close(Some(CloseFrame {
-                                            code: axum::extract::ws::close_code::POLICY,
-                                            reason: Cow::from("Invalid password"),
-                                        }))).await {
-                                            tracing::info!("Could not send Close due to {}, probably it is ok?", e);
-                                        }
                                         return;
                                     }
                                 } else {
-                                    if let Err(e) = sender.send(Message::Close(Some(CloseFrame {
-                                        code: axum::extract::ws::close_code::INVALID,
-                                        reason: Cow::from("Malformed command"),
-                                    }))).await {
-                                        tracing::info!("Could not send Close due to {}, probably it is ok?", e);
-                                    }
                                     return;
                                 }
                             },
@@ -193,12 +181,6 @@ async fn handle_socket(
                                     socket_state = SocketState::Subbed { metadata: sub_data };
                                     break 'recv;
                                 } else {
-                                    if let Err(e) = sender.send(Message::Close(Some(CloseFrame {
-                                        code: axum::extract::ws::close_code::INVALID,
-                                        reason: Cow::from("Invalid message"),
-                                    }))).await {
-                                        tracing::info!("Could not send Close due to {}, probably it is ok?", e);
-                                    }
                                     return;
                                 }
                             },
@@ -211,50 +193,20 @@ async fn handle_socket(
                                 if let Some(publisher) = publisher {
                                     socket_state = SocketState::Pubbed { publisher: publisher.to_string() };
                                 } else {
-                                    if let Err(e) = sender.send(Message::Close(Some(CloseFrame {
-                                        code: axum::extract::ws::close_code::INVALID,
-                                        reason: Cow::from("Malformed command"),
-                                    }))).await {
-                                        tracing::info!("Could not send Close due to {}, probably it is ok?", e);
-                                    }
                                     return;
                                 }
                             },
                             _ => {
-                                if let Err(e) = sender.send(Message::Close(Some(CloseFrame {
-                                    code: axum::extract::ws::close_code::INVALID,
-                                    reason: Cow::from("Invalid command"),
-                                }))).await {
-                                    tracing::info!("Could not send Close due to {}, probably it is ok?", e);
-                                }
                                 return;
                             }
                         })
                     }
                     SocketState::Pubbed { ref publisher } => {
-                        match serde_json::from_str::<PublisherMsg>(&text) {
-                            Ok(data) => {
-                                let publisher_msg = PubSubMsg::new(data, publisher.to_string());
-                                let _ = state.tx.send(publisher_msg);
-                            }
-                            Err(e) => {
-                                if let Err(e) = sender
-                                    .send(Message::Close(Some(CloseFrame {
-                                        code: axum::extract::ws::close_code::INVALID,
-                                        reason: Cow::from(format!(
-                                            "Invalid JSON: {}",
-                                            e.to_string()
-                                        )),
-                                    })))
-                                    .await
-                                {
-                                    tracing::info!(
-                                        "Could not send Close due to {}, probably it is ok?",
-                                        e
-                                    );
-                                }
-                                return;
-                            }
+                        if let Ok(data) = serde_json::from_str::<PublisherMsg>(&text) {
+                            let publisher_msg = PubSubMsg::new(data, publisher.to_string());
+                            let _ = state.tx.send(publisher_msg);
+                        } else {
+                            return;
                         }
                     }
                     _ => {}
@@ -277,15 +229,6 @@ async fn handle_socket(
                 tracing::info!(">>> {} sent ping with {:?}", who, v);
             }
             _ => {
-                if let Err(e) = sender
-                    .send(Message::Close(Some(CloseFrame {
-                        code: axum::extract::ws::close_code::UNSUPPORTED,
-                        reason: Cow::from("Invalid message"),
-                    })))
-                    .await
-                {
-                    tracing::info!("Could not send Close due to {}, probably it is ok?", e);
-                }
                 return;
             }
         }
