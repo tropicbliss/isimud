@@ -60,12 +60,7 @@ async fn main() -> Result<()> {
         .init();
     let show_github_page = std::env::var("HOMEPAGE").unwrap_or("true".to_string());
     let show_github_page = matches!(show_github_page.as_str(), "true" | "t" | "1");
-    let user_agent_filter = std::env::var("USER_AGENT_FILTER").unwrap_or("".to_string());
-    let user_agent_filter = if user_agent_filter == "" {
-        None
-    } else {
-        Some(user_agent_filter)
-    };
+    let user_agent_filter = std::env::var("USER_AGENT_FILTER").ok();
     let app = Router::new()
         .route("/", get(github_redirect))
         .route("/ws", get(ws_handler))
