@@ -5,7 +5,7 @@ use axum::{
         ConnectInfo, State, WebSocketUpgrade,
     },
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Redirect, Response},
     routing::get,
     Router, TypedHeader,
 };
@@ -31,13 +31,18 @@ struct PublisherMsg {
 struct SharedState {
     tx: Sender<PubSubMsg>,
     password: String,
+    show_github_page: bool,
 }
 
 impl SharedState {
-    fn new() -> Result<Self> {
+    fn new(show_github_page: bool) -> Result<Self> {
         let password = std::env::var("PASSWORD")?;
         let (tx, _) = broadcast::channel(16);
-        Ok(Self { tx, password })
+        Ok(Self {
+            tx,
+            password,
+            show_github_page,
+        })
     }
 }
 
@@ -52,13 +57,14 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
     let app = Router::new()
-        .route("/", get(ws_handler))
+        .route("/", get(github_redirect))
+        .route("/ws", get(ws_handler))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         )
         .fallback(handler_404)
-        .with_state(Arc::new(SharedState::new()?));
+        .with_state(Arc::new(SharedState::new(true)?));
     let ip: Ipv4Addr = std::env::var("IP").unwrap_or("127.0.0.1".into()).parse()?;
     let port: u16 = std::env::var("PORT").unwrap_or("3000".into()).parse()?;
     let addr = SocketAddr::from((ip, port));
@@ -71,6 +77,14 @@ async fn main() -> Result<()> {
 
 async fn handler_404() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, "nothing to see here")
+}
+
+async fn github_redirect(state: State<Arc<SharedState>>) -> Response {
+    if state.show_github_page {
+        Redirect::to("https://github.com/tropicbliss/isimud").into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "nothing to see here").into_response()
+    }
 }
 
 async fn ws_handler(

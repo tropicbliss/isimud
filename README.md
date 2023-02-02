@@ -4,7 +4,9 @@ An in-memory pub/sub server.
 
 ## Usage
 
-Communicating with this server is done through websockets at the root URL path (`/`). The socket connection can spontaneously close if the server does not like what you are sending.
+Communicating with this server is done through websockets at the websocket URL path (`/ws`).
+
+Take note that the socket connection can spontaneously close if the server does not like what you are sending.
 
 ### Publisher
 
