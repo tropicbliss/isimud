@@ -32,16 +32,18 @@ struct SharedState {
     tx: Sender<PubSubMsg>,
     password: String,
     show_github_page: bool,
+    user_agent_filter: Option<String>,
 }
 
 impl SharedState {
-    fn new(show_github_page: bool) -> Result<Self> {
+    fn new(show_github_page: bool, user_agent_filter: Option<String>) -> Result<Self> {
         let password = std::env::var("PASSWORD")?;
         let (tx, _) = broadcast::channel(16);
         Ok(Self {
             tx,
             password,
             show_github_page,
+            user_agent_filter,
         })
     }
 }
@@ -58,6 +60,12 @@ async fn main() -> Result<()> {
         .init();
     let show_github_page = std::env::var("HOMEPAGE").unwrap_or("true".to_string());
     let show_github_page = matches!(show_github_page.as_str(), "true" | "t" | "1");
+    let user_agent_filter = std::env::var("USER_AGENT_FILTER").unwrap_or("".to_string());
+    let user_agent_filter = if user_agent_filter == "" {
+        None
+    } else {
+        Some(user_agent_filter)
+    };
     let app = Router::new()
         .route("/", get(github_redirect))
         .route("/ws", get(ws_handler))
@@ -66,7 +74,10 @@ async fn main() -> Result<()> {
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         )
         .fallback(handler_404)
-        .with_state(Arc::new(SharedState::new(show_github_page)?));
+        .with_state(Arc::new(SharedState::new(
+            show_github_page,
+            user_agent_filter,
+        )?));
     let ip: Ipv4Addr = std::env::var("IP").unwrap_or("127.0.0.1".into()).parse()?;
     let port: u16 = std::env::var("PORT").unwrap_or("3000".into()).parse()?;
     let addr = SocketAddr::from((ip, port));
@@ -101,7 +112,7 @@ async fn ws_handler(
         String::from("Unknown browser")
     };
     tracing::info!("`{user_agent}` at {} connected.", addr.to_string());
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, state))
+    ws.on_upgrade(move |socket| handle_socket(socket, addr, state, user_agent))
 }
 
 enum SocketState {
@@ -129,8 +140,27 @@ impl PubSubMsg {
     }
 }
 
-async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<Arc<SharedState>>) {
+async fn handle_socket(
+    socket: WebSocket,
+    who: SocketAddr,
+    State(state): State<Arc<SharedState>>,
+    user_agent: String,
+) {
     let (mut sender, mut receiver) = socket.split();
+    if let Some(allowed_agent) = &state.user_agent_filter {
+        if user_agent != *allowed_agent {
+            if let Err(e) = sender
+                .send(Message::Close(Some(CloseFrame {
+                    code: axum::extract::ws::close_code::POLICY,
+                    reason: Cow::from("Connection disallowed"),
+                })))
+                .await
+            {
+                tracing::info!("Could not send Close due to {}, probably it is ok?", e);
+            }
+            return;
+        }
+    }
     let mut socket_state = SocketState::Pending;
     'recv: while let Some(Ok(msg)) = receiver.next().await {
         match msg {
@@ -146,7 +176,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
                                         socket_state = SocketState::Authed;
                                     } else {
                                         if let Err(e) = sender.send(Message::Close(Some(CloseFrame {
-                                            code: axum::extract::ws::close_code::INVALID,
+                                            code: axum::extract::ws::close_code::POLICY,
                                             reason: Cow::from("Invalid password"),
                                         }))).await {
                                             tracing::info!("Could not send Close due to {}, probably it is ok?", e);
@@ -254,7 +284,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
             _ => {
                 if let Err(e) = sender
                     .send(Message::Close(Some(CloseFrame {
-                        code: axum::extract::ws::close_code::INVALID,
+                        code: axum::extract::ws::close_code::UNSUPPORTED,
                         reason: Cow::from("Invalid message"),
                     })))
                     .await
