@@ -306,9 +306,35 @@ async fn handle_socket(
             count
         });
         let mut recv_task = tokio::spawn(async move {
-            if let Some(Ok(_)) = receiver.next().await {
-                return;
+            let mut count = 0;
+            if let Some(Ok(msg)) = receiver.next().await {
+                count += 1;
+                match msg {
+                    Message::Ping(v) => {
+                        tracing::info!(">>> {} sent ping with {:?}", who, v);
+                    }
+                    Message::Close(c) => {
+                        if let Some(cf) = c {
+                            tracing::info!(
+                                ">>> {} sent close with code {} and reason `{}`",
+                                who,
+                                cf.code,
+                                cf.reason
+                            );
+                        } else {
+                            tracing::info!(
+                                ">>> {} somehow sent close message without CloseFrame",
+                                who
+                            );
+                        }
+                        return count;
+                    }
+                    _ => {
+                        return count;
+                    }
+                }
             }
+            count
         });
         tokio::select! {
             rv_a = (&mut send_task) => {
@@ -318,7 +344,11 @@ async fn handle_socket(
                 }
                 recv_task.abort();
             },
-            _ = (&mut recv_task) => {
+            rv_b = (&mut recv_task) => {
+                match rv_b {
+                    Ok(b) => println!("Received {} messages", b),
+                    Err(b) => println!("Error receiving messages {:?}", b)
+                }
                 send_task.abort();
             }
         }
