@@ -1,4 +1,4 @@
-FROM rust:1.67
+FROM rust:1.67-slim-buster
 
 WORKDIR /usr/src/app
 
@@ -8,4 +8,4 @@ RUN cargo install --path .
 
 RUN rm -r *
 
-CMD ["isimud"]
+ENTRYPOINT [ "isimud" ]
