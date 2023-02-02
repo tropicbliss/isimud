@@ -56,6 +56,8 @@ async fn main() -> Result<()> {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+    let show_github_page = std::env::var("HOMEPAGE").unwrap_or("true".to_string());
+    let show_github_page = matches!(show_github_page.as_str(), "true" | "t" | "1");
     let app = Router::new()
         .route("/", get(github_redirect))
         .route("/ws", get(ws_handler))
@@ -64,7 +66,7 @@ async fn main() -> Result<()> {
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         )
         .fallback(handler_404)
-        .with_state(Arc::new(SharedState::new(true)?));
+        .with_state(Arc::new(SharedState::new(show_github_page)?));
     let ip: Ipv4Addr = std::env::var("IP").unwrap_or("127.0.0.1".into()).parse()?;
     let port: u16 = std::env::var("PORT").unwrap_or("3000".into()).parse()?;
     let addr = SocketAddr::from((ip, port));

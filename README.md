@@ -41,3 +41,5 @@ Take note that the socket connection can spontaneously close if the server does 
 `IP` (optional): `127.0.0.1` by default.
 
 `PORT` (optional): `3000` by default.
+
+`HOMEPAGE` (optional): Redirects `/` to this GitHub page if `true` (enabled by default)
