@@ -8,6 +8,8 @@ Communicating with this server is done through websockets at the websocket URL p
 
 Take note that the socket connection can spontaneously close if the server does not like what you are sending.
 
+It is good courtesy to close a client's websocket connection to the server when not in use.
+
 ### Publisher
 
 1. `pub auth <password>`
