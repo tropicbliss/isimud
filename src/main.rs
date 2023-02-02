@@ -9,7 +9,6 @@ use axum::{
     routing::get,
     Router, TypedHeader,
 };
-use dotenvy::dotenv;
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::{
@@ -50,7 +49,6 @@ impl SharedState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv().ok();
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
