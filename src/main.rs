@@ -21,6 +21,8 @@ use tokio::sync::broadcast::{self, Sender};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt};
 
+const NOT_FOUND_ERROR_STR: &'static str = "nothing to see here";
+
 #[derive(Deserialize, Clone)]
 struct PublisherMsg {
     topic: String,
@@ -82,14 +84,14 @@ async fn main() -> Result<()> {
 }
 
 async fn handler_404() -> impl IntoResponse {
-    (StatusCode::NOT_FOUND, "nothing to see here")
+    (StatusCode::NOT_FOUND, NOT_FOUND_ERROR_STR)
 }
 
 async fn github_redirect(state: State<Arc<SharedState>>) -> Response {
     if state.show_github_page {
         Redirect::to("https://github.com/tropicbliss/isimud").into_response()
     } else {
-        (StatusCode::NOT_FOUND, "nothing to see here").into_response()
+        (StatusCode::NOT_FOUND, NOT_FOUND_ERROR_STR).into_response()
     }
 }
 
