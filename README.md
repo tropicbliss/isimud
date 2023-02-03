@@ -10,7 +10,7 @@ It is good courtesy to close a client's websocket connection to the server when 
 
 ### Publisher
 
-1. Send the following JSON via a POST request to `/pub`.:
+1. Send the following JSON via a POST request to `/pub`:
 
 ```json
 {
