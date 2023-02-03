@@ -4,15 +4,13 @@ An in-memory pub/sub server.
 
 ## Usage
 
-Communicating with this server is done through websockets at the websocket URL path (`/ws`).
-
 Take note that the socket connection can spontaneously close if the server does not like what you are sending.
 
 It is good courtesy to close a client's websocket connection to the server when not in use.
 
 ### Publisher
 
-1. Send the following JSON via a POST request:
+1. Send the following JSON via a POST request to `/pub`.:
 
 ```json
 {
@@ -25,7 +23,7 @@ with the [`Authorization: Basic ...`](https://developer.mozilla.org/en-US/docs/W
 
 ### Subscriber
 
-1. Send the following JSON as text:
+1. Send the following JSON as text via websocket to `/sub`:
 
 ```json
 {
