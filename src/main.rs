@@ -19,8 +19,6 @@ use tokio::sync::broadcast::{self, Sender};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt};
 
-const NOT_FOUND_ERROR_STR: &'static str = "nothing to see here";
-
 #[derive(Deserialize, Debug, Clone)]
 struct PublisherMsg {
     topic: String,
@@ -64,7 +62,6 @@ async fn main() -> anyhow::Result<()> {
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         )
-        .fallback(handler_404)
         .with_state(Arc::new(SharedState::new(show_github_page)?));
     let ip: Ipv4Addr = std::env::var("IP").unwrap_or("127.0.0.1".into()).parse()?;
     let port: u16 = std::env::var("PORT").unwrap_or("3000".into()).parse()?;
@@ -114,15 +111,11 @@ impl IntoResponse for AuthError {
     }
 }
 
-async fn handler_404() -> impl IntoResponse {
-    (StatusCode::NOT_FOUND, NOT_FOUND_ERROR_STR)
-}
-
 async fn github_redirect(state: State<Arc<SharedState>>) -> Response {
     if state.show_github_page {
         Redirect::to("https://github.com/tropicbliss/isimud").into_response()
     } else {
-        (StatusCode::NOT_FOUND, NOT_FOUND_ERROR_STR).into_response()
+        StatusCode::NOT_FOUND.into_response()
     }
 }
 
