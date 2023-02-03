@@ -1,29 +1,27 @@
-use anyhow::Result;
 use axum::{
     extract::{
-        ws::{CloseFrame, Message, WebSocket},
+        ws::{Message, WebSocket},
         ConnectInfo, State, WebSocketUpgrade,
     },
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
-    routing::get,
-    Router, TypedHeader,
+    routing::{get, post},
+    Json, Router, TypedHeader,
 };
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
+use serde_json::json;
 use std::{
-    borrow::Cow,
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
 };
-use strmatch::strmatch;
 use tokio::sync::broadcast::{self, Sender};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt};
 
 const NOT_FOUND_ERROR_STR: &'static str = "nothing to see here";
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 struct PublisherMsg {
     topic: String,
     data: String,
@@ -33,24 +31,22 @@ struct SharedState {
     tx: Sender<PubSubMsg>,
     password: String,
     show_github_page: bool,
-    user_agent_filter: Option<String>,
 }
 
 impl SharedState {
-    fn new(show_github_page: bool, user_agent_filter: Option<String>) -> Result<Self> {
+    fn new(show_github_page: bool) -> anyhow::Result<Self> {
         let password = std::env::var("PASSWORD")?;
         let (tx, _) = broadcast::channel(16);
         Ok(Self {
             tx,
             password,
             show_github_page,
-            user_agent_filter,
         })
     }
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -60,19 +56,16 @@ async fn main() -> Result<()> {
         .init();
     let show_github_page = std::env::var("HOMEPAGE").unwrap_or("true".to_string());
     let show_github_page = matches!(show_github_page.as_str(), "true" | "t" | "1");
-    let user_agent_filter = std::env::var("USER_AGENT_FILTER").ok();
     let app = Router::new()
         .route("/", get(github_redirect))
-        .route("/ws", get(ws_handler))
+        .route("/pub", post(pub_handler))
+        .route("/sub", get(ws_handler))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         )
         .fallback(handler_404)
-        .with_state(Arc::new(SharedState::new(
-            show_github_page,
-            user_agent_filter,
-        )?));
+        .with_state(Arc::new(SharedState::new(show_github_page)?));
     let ip: Ipv4Addr = std::env::var("IP").unwrap_or("127.0.0.1".into()).parse()?;
     let port: u16 = std::env::var("PORT").unwrap_or("3000".into()).parse()?;
     let addr = SocketAddr::from((ip, port));
@@ -81,6 +74,44 @@ async fn main() -> Result<()> {
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await?;
     Ok(())
+}
+
+async fn pub_handler(
+    server_info: Option<TypedHeader<headers::Authorization<headers::authorization::Basic>>>,
+    state: State<Arc<SharedState>>,
+    Json(payload): Json<PublisherMsg>,
+) -> Result<Response, AuthError> {
+    if let Some(TypedHeader(provided_password)) = server_info {
+        if provided_password.password() == &state.password {
+            let _ = state.tx.send(PubSubMsg::new(
+                payload,
+                provided_password.username().to_string(),
+            ));
+            return Ok(StatusCode::OK.into_response());
+        } else {
+            return Err(AuthError::WrongCredentials);
+        }
+    }
+    Err(AuthError::MissingCredentials)
+}
+
+#[derive(Debug)]
+enum AuthError {
+    WrongCredentials,
+    MissingCredentials,
+}
+
+impl IntoResponse for AuthError {
+    fn into_response(self) -> Response {
+        let (status, error_message) = match self {
+            AuthError::WrongCredentials => (StatusCode::UNAUTHORIZED, "Wrong credentials"),
+            AuthError::MissingCredentials => (StatusCode::BAD_REQUEST, "Missing credentials"),
+        };
+        let body = Json(json!({
+            "error": error_message,
+        }));
+        (status, body).into_response()
+    }
 }
 
 async fn handler_404() -> impl IntoResponse {
@@ -107,14 +138,7 @@ async fn ws_handler(
         String::from("Unknown browser")
     };
     tracing::info!("`{user_agent}` at {} connected.", addr.to_string());
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, state, user_agent))
-}
-
-enum SocketState {
-    Pending,
-    Authed,
-    Pubbed { publisher: String },
-    Subbed { metadata: SubscriberMsg },
+    ws.on_upgrade(move |socket| handle_socket(socket, addr, state))
 }
 
 #[derive(Deserialize)]
@@ -135,82 +159,21 @@ impl PubSubMsg {
     }
 }
 
-async fn handle_socket(
-    socket: WebSocket,
-    who: SocketAddr,
-    State(state): State<Arc<SharedState>>,
-    user_agent: String,
-) {
+async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<Arc<SharedState>>) {
     let (mut sender, mut receiver) = socket.split();
-    if let Some(allowed_agent) = &state.user_agent_filter {
-        if user_agent != *allowed_agent {
-            if let Err(e) = sender
-                .send(Message::Close(Some(CloseFrame {
-                    code: axum::extract::ws::close_code::POLICY,
-                    reason: Cow::from("Connection disallowed"),
-                })))
-                .await
-            {
-                tracing::info!("Could not send Close due to {}, probably it is ok?", e);
-            }
-            return;
-        }
-    }
-    let mut socket_state = SocketState::Pending;
-    'recv: while let Some(Ok(msg)) = receiver.next().await {
+    let mut sub_data = None;
+    while let Some(Ok(msg)) = receiver.next().await {
         match msg {
-            Message::Text(text) => {
-                tracing::info!(">>> {} sent str: {:?}", who, text);
-                match socket_state {
-                    SocketState::Pending => {
-                        strmatch!(text.as_str() => {
-                            "^pub auth .+$" => {
-                                let password = text.split_whitespace().nth(2);
-                                if let Some(password) = password {
-                                    if password == state.password {
-                                        socket_state = SocketState::Authed;
-                                    } else {
-                                        return;
-                                    }
-                                } else {
-                                    return;
-                                }
-                            },
-                            _ => {
-                                if let Ok(sub_data) = serde_json::from_str::<SubscriberMsg>(&text) {
-                                    socket_state = SocketState::Subbed { metadata: sub_data };
-                                    break 'recv;
-                                } else {
-                                    return;
-                                }
-                            },
-                        })
-                    }
-                    SocketState::Authed => {
-                        strmatch!(text.as_str() => {
-                            "^pub name .+$" => {
-                                let publisher = text.split_whitespace().nth(2);
-                                if let Some(publisher) = publisher {
-                                    socket_state = SocketState::Pubbed { publisher: publisher.to_string() };
-                                } else {
-                                    return;
-                                }
-                            },
-                            _ => {
-                                return;
-                            }
-                        })
-                    }
-                    SocketState::Pubbed { ref publisher } => {
-                        if let Ok(data) = serde_json::from_str::<PublisherMsg>(&text) {
-                            let publisher_msg = PubSubMsg::new(data, publisher.to_string());
-                            let _ = state.tx.send(publisher_msg);
-                        } else {
-                            return;
-                        }
-                    }
-                    _ => {}
+            Message::Text(t) => {
+                println!(">>> {} sent str: {:?}", who, t);
+                if let Ok(s) = serde_json::from_str::<SubscriberMsg>(&t) {
+                    sub_data = Some(s);
+                } else {
+                    break;
                 }
+            }
+            Message::Ping(v) => {
+                tracing::info!(">>> {} sent ping with {:?}", who, v);
             }
             Message::Close(c) => {
                 if let Some(cf) = c {
@@ -223,35 +186,27 @@ async fn handle_socket(
                 } else {
                     tracing::info!(">>> {} somehow sent close message without CloseFrame", who);
                 }
-                return;
-            }
-            Message::Ping(v) => {
-                tracing::info!(">>> {} sent ping with {:?}", who, v);
+                break;
             }
             _ => {
-                return;
+                break;
             }
         }
     }
-    if let SocketState::Subbed { metadata } = socket_state {
+    if let Some(sub_data) = sub_data {
         let mut send_task = tokio::spawn(async move {
-            let mut count = 0;
             let mut receiver = state.tx.subscribe();
             while let Ok(data) = receiver.recv().await {
-                if metadata.publisher == data.name && metadata.topic == data.msg.topic {
-                    count += 1;
+                if sub_data.publisher == data.name && sub_data.topic == data.msg.topic {
                     if sender.send(Message::Text(data.msg.data)).await.is_err() {
                         tracing::info!("client {} abruptly disconnected", who);
-                        return count;
+                        return;
                     }
                 }
             }
-            count
         });
         let mut recv_task = tokio::spawn(async move {
-            let mut count = 0;
-            if let Some(Ok(msg)) = receiver.next().await {
-                count += 1;
+            while let Some(Ok(msg)) = receiver.next().await {
                 match msg {
                     Message::Ping(v) => {
                         tracing::info!(">>> {} sent ping with {:?}", who, v);
@@ -270,28 +225,23 @@ async fn handle_socket(
                                 who
                             );
                         }
-                        return count;
+                        break;
+                    }
+                    Message::Text(t) => {
+                        println!(">>> {} sent str: {:?}", who, t);
+                        break;
                     }
                     _ => {
-                        return count;
+                        break;
                     }
                 }
             }
-            count
         });
         tokio::select! {
-            rv_a = (&mut send_task) => {
-                match rv_a {
-                    Ok(a) => tracing::info!("{} messages sent to {}", a, who),
-                    Err(a) => tracing::info!("Error sending messages {:?}", a)
-                }
+            _ = (&mut send_task) => {
                 recv_task.abort();
             },
-            rv_b = (&mut recv_task) => {
-                match rv_b {
-                    Ok(b) => println!("Received {} messages", b),
-                    Err(b) => println!("Error receiving messages {:?}", b)
-                }
+            _ = (&mut recv_task) => {
                 send_task.abort();
             }
         }
