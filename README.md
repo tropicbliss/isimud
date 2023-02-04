@@ -34,6 +34,10 @@ with the [`Authorization: Basic ...`](https://developer.mozilla.org/en-US/docs/W
 
 2. Be ready to receive publisher `data` as text.
 
+#### Authorization
+
+Sometimes, you might want to allow only trusted sources to connect to your server, to prevent unauthorized sources from hogging your websocket connections. Adding `AUTH_URL` as an environment variable allows the server to contact an authorization server at that URL to query whether the connecting user is authorized to connect. This server sends a GET request with an empty body, and if the status code returned by the authorization server is within 200-299, this server allows the client to connect to the `/sub` endpoint. This requires the client to connect to the `/sub` endpoint via an [`Authorization: Bearer <...>`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Authorization) header, which then sends the same header to the authorization server. This can result in an Internal Server Error (500) if the HTTP connection to the authorization server timeouts within 5 seconds.
+
 ### Environment variables
 
 `PASSWORD`: Only establishes a connection if the publisher connects with the same password. This is unencrypted data and could be potentially dangerous depending on your threat model.
@@ -43,3 +47,5 @@ with the [`Authorization: Basic ...`](https://developer.mozilla.org/en-US/docs/W
 `PORT` (optional): `3000` by default.
 
 `HOMEPAGE` (optional): Redirects `/` to this GitHub page if `true` (enabled by default)
+
+`AUTH_URL` (optional): Authorization URL for the `/sub` endpoint (subscriber authorization disabled by default)
