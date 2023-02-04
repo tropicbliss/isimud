@@ -151,7 +151,7 @@ async fn ws_handler(
     } else {
         String::from("Unknown browser")
     };
-    tracing::info!("`{user_agent}` at {} connected.", addr.to_string());
+    tracing::info!("`{user_agent}` at {addr} connected.");
     if let Some(validation_url) = &state.auth_url {
         if let Some(bearer) = bearer {
             if !state
