@@ -158,7 +158,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
     while let Some(Ok(msg)) = receiver.next().await {
         match msg {
             Message::Text(t) => {
-                println!(">>> {} sent str: {:?}", who, t);
+                tracing::info!(">>> {} sent str: {:?}", who, t);
                 if let Ok(s) = serde_json::from_str::<SubscriberMsg>(&t) {
                     sub_data = Some(s);
                 } else {
@@ -221,7 +221,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
                         break;
                     }
                     Message::Text(t) => {
-                        println!(">>> {} sent str: {:?}", who, t);
+                        tracing::info!(">>> {} sent str: {:?}", who, t);
                         break;
                     }
                     _ => {
