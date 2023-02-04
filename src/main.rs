@@ -113,7 +113,7 @@ impl IntoResponse for AuthError {
 
 async fn github_redirect(state: State<Arc<SharedState>>) -> Response {
     if state.show_github_page {
-        Redirect::to("https://github.com/tropicbliss/isimud").into_response()
+        Redirect::to("https://github.com/tropicbliss/isimud/").into_response()
     } else {
         StatusCode::NOT_FOUND.into_response()
     }
