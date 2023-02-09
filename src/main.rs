@@ -230,7 +230,13 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, State(state): State<A
             let mut receiver = state.tx.subscribe();
             while let Ok(data) = receiver.recv().await {
                 if sub_data.publisher == data.name && sub_data.topic == data.msg.topic {
-                    if sender.send(Message::Text(data.msg.data)).await.is_err() {
+                    if tokio::time::timeout(
+                        Duration::from_secs(5),
+                        sender.send(Message::Text(data.msg.data)),
+                    )
+                    .await
+                    .is_err()
+                    {
                         tracing::info!("client {} abruptly disconnected", who);
                         return;
                     }
